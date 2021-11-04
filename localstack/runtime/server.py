@@ -1,10 +1,11 @@
 from localstack.aws.gateway import Gateway
-from localstack.aws.serving.http2_server import LocalstackHttp2Adapter
-from localstack.services.generic_proxy import GenericProxy, install_predefined_cert_if_available
-from localstack.utils.server import http2_server
 
 
 def start(gateway: Gateway, port, bind_address="0.0.0.0", use_ssl=False):
+    from localstack.aws.serving.http2_server import LocalstackHttp2Adapter
+    from localstack.services.generic_proxy import GenericProxy, install_predefined_cert_if_available
+    from localstack.utils.server import http2_server
+
     ssl_creds = (None, None)
     if use_ssl:
         install_predefined_cert_if_available()

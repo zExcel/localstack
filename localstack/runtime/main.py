@@ -1,6 +1,7 @@
 import localstack.config
-from localstack.runtime.runtime import Runtime
 from localstack.utils.common import call_safe
+
+from .runtime import Runtime
 
 
 def main():
