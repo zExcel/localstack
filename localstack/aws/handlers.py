@@ -1,8 +1,9 @@
 """
 A set of common handlers to build an AWS server application.
 """
+import hashlib
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from botocore.model import ServiceModel
 from werkzeug.datastructures import Headers
@@ -179,7 +180,24 @@ class ServiceRequestRouter(Handler):
 
 
 class FilteredRequestLogger(Handler):
-    filters: Dict[ServiceOperation, List[object]]  # TODO: define datastructure for filter
+    filters: Dict[ServiceOperation, Dict[Tuple[str, str], Dict[str, str]]]
+
+    def apply_event_filter(self, input_mapping, event_filter):
+        result = {}
+        for k in input_mapping.keys() & event_filter.keys():
+            v1 = input_mapping[k]
+            v2 = event_filter[k]
+            if isinstance(v1, dict) and isinstance(v2, dict):
+                result[k] = self.apply_event_filter(v1, v2)
+            elif isinstance(v1, list) and isinstance(v2, list):
+                for idx, item in enumerate(v1):
+                    if idx < len(v2):
+                        result[k] = self.apply_event_filter(item, v2[idx])
+            else:
+                if v2 == "Hash":
+                    v1 = hashlib.sha1(v1.encode("utf-8")).hexdigest()
+                result[k] = v1
+        return result
 
     def __init__(self, filters):
         self.filters = filters or dict()
@@ -193,8 +211,7 @@ class FilteredRequestLogger(Handler):
             return
 
         doc = context.service_request
-        # TODO: apply filters to doc (boto model, like CreateQueueRequest, SendMessageBatchRequest, ...)
-        filtered_request = doc
+        filtered_request = self.apply_event_filter(input_mapping=doc, event_filter=filters)
 
         LOG.info(
             "filtered event: %s", filtered_request

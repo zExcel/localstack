@@ -97,13 +97,15 @@ class LocalstackAwsGateway(Gateway):
         self.request_router.add_provider(provider=provider, service=service_name)
 
     def _create_request_log_filters(self):
-        # FIXME: add some example filters
         filters = {
-            ("sqs", "CreateQueue"): [
-                {
-                    # ...
-                }
-            ]
+            ("sqs", "CreateQueue"): {"QueueName": "Plain"},
+            ("sns", "CreateTopic"): {"Name": "Hash"},
+            ("dynamodb", "CreateTable"): {
+                "AttributeDefinitions": [{"AttributeName": "Hash"}],
+                "KeySchema": "Plain",
+                "ProvisionedThroughput": "Plain",
+                "TableName": "Plain",
+            },
         }
 
         return filters
