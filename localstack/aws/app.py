@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 from typing import Any
 
@@ -23,6 +24,10 @@ class LocalstackAwsGateway(Gateway):
         # the request router used within the handler chain
         self.request_router = handlers.ServiceRequestRouter()
 
+        self.log_filtered_request = handlers.FilteredRequestLogger(
+            self._create_request_log_filters()
+        )
+
         # the main handler chain
         self.request_handlers.extend(
             [
@@ -30,6 +35,7 @@ class LocalstackAwsGateway(Gateway):
                 handlers.add_region_from_header,
                 handlers.add_default_account_id,
                 handlers.parse_service_request,
+                self.log_filtered_request,
                 self.require_route,
                 self.route_request,
                 self.log_response,
@@ -90,12 +96,32 @@ class LocalstackAwsGateway(Gateway):
 
         self.request_router.add_provider(provider=provider, service=service_name)
 
+    def _create_request_log_filters(self):
+        # FIXME: add some example filters
+        filters = {
+            ("sqs", "CreateQueue"): [
+                {
+                    # ...
+                }
+            ]
+        }
+
+        return filters
+
 
 def main():
+    from localstack.utils.aws.aws_stack import (
+        inject_region_into_env,
+        inject_test_credentials_into_env,
+    )
+
     from .serving import wsgi
 
+    inject_test_credentials_into_env(os.environ)
+    inject_region_into_env(os.environ, "us-east-1")
+
     # serve the LocalStackAwsGateway in a dev app
-    logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(level=logging.DEBUG)
     gw = LocalstackAwsGateway()
     wsgi.serve(gw, use_reloader=False)
 

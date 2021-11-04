@@ -2,7 +2,7 @@
 A set of common handlers to build an AWS server application.
 """
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from botocore.model import ServiceModel
 from werkzeug.datastructures import Headers
@@ -176,6 +176,29 @@ class ServiceRequestRouter(Handler):
         error = CommonServiceException("InternalFailure", message, status_code=501)
         serializer = create_serializer(context.service)
         return serializer.serialize_error_to_response(error, operation)
+
+
+class FilteredRequestLogger(Handler):
+    filters: Dict[ServiceOperation, List[object]]  # TODO: define datastructure for filter
+
+    def __init__(self, filters):
+        self.filters = filters or dict()
+
+    def __call__(self, chain: HandlerChain, context: RequestContext, response: HttpResponse):
+        if not context.service_request:
+            return
+
+        filters = self.filters.get(context.service_operation)
+        if not filters:
+            return
+
+        doc = context.service_request
+        # TODO: apply filters to doc (boto model, like CreateQueueRequest, SendMessageBatchRequest, ...)
+        filtered_request = doc
+
+        LOG.info(
+            "filtered event: %s", filtered_request
+        )  # will be replaced with analytics logging at some point
 
 
 class ExceptionLogger(ExceptionHandler):
