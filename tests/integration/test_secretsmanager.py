@@ -1,6 +1,10 @@
 import json
+import sys
 import unittest
 from datetime import datetime
+
+import botocore.config
+from botocore.exceptions import ClientError
 
 from localstack.constants import TEST_AWS_ACCOUNT_ID
 from localstack.utils.aws import aws_stack
@@ -155,3 +159,81 @@ class SecretsManagerTest(unittest.TestCase):
         self.secretsmanager_client.delete_secret(
             SecretId=secret_name, ForceDeleteWithoutRecovery=True
         )
+
+    def create_and_get_secret(self, boto_sm_client):
+        secret_name: str = "s-%s" % short_uid()
+        secret_string: str = str(short_uid())
+
+        rs_create: dict = boto_sm_client.create_secret(Name=secret_name, SecretString=secret_string)
+        self.assertEqual(200, rs_create['ResponseMetadata']['HTTPStatusCode'])
+        self.assertEqual(secret_name, rs_create["Name"])
+
+        rs_get: dict = boto_sm_client.get_secret_value(SecretId=secret_name)
+        self.assertEqual(secret_name, rs_get['Name'])
+        self.assertEqual(secret_string, rs_get["SecretString"])
+        self.assertEqual(rs_create['ARN'], rs_get['ARN'])
+        self.assertTrue(isinstance(rs_get['CreatedDate'], datetime))
+
+    def test_boto3_client_no_region_create_and_get_secret(self):
+        import boto3
+        secretsmanager_client_nr = boto3.client(
+            'secretsmanager',
+            endpoint_url=aws_stack.get_local_service_url('secretsmanager'),
+            config=botocore.config.Config(retries=dict(max_attempts=1))
+        )
+        try:
+            self.create_and_get_secret(secretsmanager_client_nr)
+        except ClientError as ce:
+            self.assertNotEqual(500, int(ce.response['Error']['Code']))
+
+    def test_boto3_client_null_region_create_and_get_secret(self):
+        import boto3
+        secretsmanager_client_nr = boto3.client(
+            'secretsmanager',
+            region_name=None,
+            endpoint_url=aws_stack.get_local_service_url('secretsmanager'),
+            config=botocore.config.Config(retries=dict(max_attempts=1))
+        )
+        try:
+            self.create_and_get_secret(secretsmanager_client_nr)
+        except ClientError as ce:
+            self.assertNotEqual(500, int(ce.response['Error']['Code']))
+
+    def test_boto3_client_with_region_create_and_get_secret(self):
+        import boto3
+        secretsmanager_client_nr = boto3.client(
+            'secretsmanager',
+            region_name=aws_stack.get_region(),
+            endpoint_url=aws_stack.get_local_service_url('secretsmanager'),
+            config=botocore.config.Config(retries=dict(max_attempts=1))
+        )
+        try:
+            self.create_and_get_secret(secretsmanager_client_nr)
+        except ClientError as ce:
+            self.assertNotEqual(500, int(ce.response['Error']['Code']))
+
+    def test_boto3_client_region_scenario1(self):
+        # Failing requests should not prevent future valid requests to succeed.
+        try:
+            self.test_boto3_client_no_region_create_and_get_secret()
+        except AssertionError as ae:
+            # Fail quietly: scenario tests the following statement.
+            print(ae, file=sys.stderr)
+        self.test_boto3_client_with_region_create_and_get_secret()
+
+    def test_boto3_client_region_scenario2(self):
+        # First -non-failing- requests is correctly handled, but future failing
+        # requests continue failing.
+        self.test_boto3_client_with_region_create_and_get_secret()
+        self.test_boto3_client_no_region_create_and_get_secret()
+
+    def test_boto3_client_region_scenario3(self):
+        # First -non-failing- request is correctly handled, and all future -non-failing- request
+        # following a failing request continue being handled correctly
+        self.test_boto3_client_with_region_create_and_get_secret()
+        try:
+            self.test_boto3_client_no_region_create_and_get_secret()
+        except AssertionError as ae:
+            # Fail quietly: scenario tests the following statement.
+            print(ae, file=sys.stderr)
+        self.test_boto3_client_with_region_create_and_get_secret()
