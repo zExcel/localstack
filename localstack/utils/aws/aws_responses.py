@@ -381,9 +381,8 @@ def parse_urlencoded_data(
             second_level_result = response._get_multi_param(
                 f"{top_level_attribute}.{r+1}.{second_level_attribute}", skip_result_conversion=True
             )
-            inner_key = second_level_attribute.split(".")[
-                0
-            ]  # "MessageAttributes.entry".split('.')[0]
+            # "MessageAttributes.entry".split('.')[0]
+            inner_key = second_level_attribute.split(".")[0]
             if second_level_result:
                 result[r][inner_key] = second_level_result
     return result

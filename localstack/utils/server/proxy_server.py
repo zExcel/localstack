@@ -6,9 +6,10 @@ import socket
 from typing import Any, Dict, Tuple, Union
 
 import requests
+import sys
 
 from localstack.constants import BIND_HOST, HEADER_ACCEPT_ENCODING, LOCALHOST_IP
-from localstack.services.generic_proxy import ProxyListener, start_proxy_server
+from localstack.services.generic_proxy import ProxyListener, start_proxy_server, GenericProxy
 from localstack.utils.async_utils import ensure_event_loop
 from localstack.utils.common import (
     TMP_THREADS,
@@ -28,7 +29,7 @@ BUFFER_SIZE = 2 ** 10  # 1024
 PortOrUrl = Union[str, int]
 
 
-def start_tcp_proxy(src, dst, handler, **kwargs):
+def start_tcp_proxy(src, dst, handler, use_ssl=False, **kwargs):
     """Run a simple TCP proxy (tunneling raw connections from src to dst), using a message handler
         that can be used to intercept messages and return predefined responses for certain requests.
 
@@ -38,27 +39,39 @@ def start_tcp_proxy(src, dst, handler, **kwargs):
     handler -- a handler function to intercept requests (returns tuple (forward_value, response_value))
     """
 
-    src = "%s:%s" % (BIND_HOST, src) if is_number(src) else src
-    dst = "%s:%s" % (LOCALHOST_IP, dst) if is_number(dst) else dst
+    src = f"{BIND_HOST}:{src}" if is_number(src) else src
+    dst = f"{LOCALHOST_IP}:{dst}" if is_number(dst) else dst
     thread = kwargs.get("_thread")
 
     def ip_to_tuple(ip):
         ip, port = ip.split(":")
         return ip, int(port)
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(ip_to_tuple(src))
-    s.listen(1)
-    s.settimeout(10)
+    print("!!start_tcp_proxy", src, dst)
+    sys.stdout.flush()
 
-    def handle_request(s_src, thread):
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        server_sock.bind(ip_to_tuple(src))
+        server_sock.listen()
+        server_sock.settimeout(10)
+    except Exception as e:
+        raise(f"Unable to bind socket to {src}: {e}")
+
+    def handle_request(s_src, _thread):
+        print("!!handle_request", s_src, dst)
+        sys.stdout.flush()
         s_dst = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s_dst.connect(ip_to_tuple(dst))
+        print("!!handle_request1", ip_to_tuple(dst))
+        sys.stdout.flush()
 
         sockets = [s_src, s_dst]
 
         try:
-            while thread.running:
+            while _thread.running:
                 s_read, _, _ = select.select(sockets, [], [])
 
                 for s in s_read:
@@ -78,15 +91,29 @@ def start_tcp_proxy(src, dst, handler, **kwargs):
                     elif s == s_dst:
                         s_src.sendall(data)
         finally:
+            print('!!!CLOSING')
             run_safe(s_src.close)
             run_safe(s_dst.close)
+            print('!!!CLOSED')
 
-    while thread.running:
-        try:
-            src_socket, _ = s.accept()
-            start_worker_thread(lambda *args, _thread: handle_request(src_socket, _thread))
-        except socket.timeout:
-            pass
+    print("!!start_tcp_proxy1", src, dst)
+    sys.stdout.flush()
+
+    with server_sock:
+        while thread.running:
+            try:
+                print("!!proxy accept wait", src, dst)
+                sys.stdout.flush()
+                src_socket, _ = server_sock.accept()
+                print("!!proxy accepted", src, dst, src_socket)
+                sys.stdout.flush()
+                start_worker_thread(lambda *args, _thread: handle_request(src_socket, _thread))
+            except Exception as e:
+                print("!!!EXC", e)
+                sys.stdout.flush()
+                pass
+
+    print("!!RETURN/close socket", src, dst)
 
 
 def start_ssl_proxy(
