@@ -23,6 +23,10 @@ class ProxyListenerAdapter(ProxyListener):
 
     def forward_request(self, method, path, data, headers):
         split_url = urlsplit(path)
+
+        if not isinstance(headers, dict):
+            headers = dict(headers)
+
         request = Request(
             method=method,
             path=split_url.path,
