@@ -119,5 +119,7 @@ def test_serialize_response(api_call: ApiResponse):
     # assert parsed_response["ResponseMetadata"]["HTTPStatusCode"] == status_code
     assert "RequestId" in parsed_response["ResponseMetadata"]
     assert len(parsed_response["ResponseMetadata"]["RequestId"]) == 52
-    del parsed_response["ResponseMetadata"]
+    # There might be additional top-level members which have been parsed but were not in the initial data
+    # (like ETag fields for S3). Remove all data that is in the parsed_response but _not_ in the initial data.
+    parsed_response = {key: value for key, value in parsed_response.items() if key in data}
     assert parsed_response == data
