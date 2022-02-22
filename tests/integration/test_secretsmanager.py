@@ -764,7 +764,7 @@ class TestSecretsManager:
         while crt_v1 == cr_v0_res_json["VersionId"]:
             crt_v1 = str(uuid.uuid4())
         #
-        pv_v1_res_json = self.secretsmanager_http_put_secret_value_with_version_val_res(
+        self.secretsmanager_http_put_secret_value_with_version_val_res(
             self.secretsmanager_http_put_secret_value_with_version(
                 secret_name, secret_string_v1, crt_v1, version_stages_v1
             ),
@@ -805,10 +805,10 @@ class TestSecretsManager:
             self.secretsmanager_http_delete_secret(secret_name), secret_name
         )
 
-    def test_rotate_secret_with_lambda(self):
+    def test_rotate_secret_with_lambda(self, secretsmanager_client):
         secret_name = "s-%s" % short_uid()
 
-        self.secretsmanager_client.create_secret(
+        secretsmanager_client.create_secret(
             Name=secret_name,
             SecretString="my_secret",
             Description="testing rotation of secrets",
@@ -821,7 +821,7 @@ class TestSecretsManager:
             runtime=LAMBDA_RUNTIME_PYTHON36,
         )["CreateFunctionResponse"]["FunctionArn"]
 
-        response = self.secretsmanager_client.rotate_secret(
+        response = secretsmanager_client.rotate_secret(
             SecretId=secret_name,
             RotationLambdaARN=function_arn,
             RotationRules={
@@ -830,10 +830,8 @@ class TestSecretsManager:
             RotateImmediately=True,
         )
 
-        self.assertEqual(response["ResponseMetadata"]["HTTPStatusCode"], 200)
+        assert response["ResponseMetadata"]["HTTPStatusCode"] == 200
 
         # clean up
-        self.secretsmanager_client.delete_secret(
-            SecretId=secret_name, ForceDeleteWithoutRecovery=True
-        )
+        secretsmanager_client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
         testutil.delete_lambda_function(function_name)
