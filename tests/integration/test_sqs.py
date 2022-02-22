@@ -17,9 +17,9 @@ from localstack.constants import TEST_AWS_ACCESS_KEY_ID, TEST_AWS_SECRET_ACCESS_
 from localstack.utils.aws import aws_stack
 from localstack.utils.common import get_service_protocol, poll_condition, retry, short_uid, to_str
 
+from .awslambda.functions import lambda_integration
+from .awslambda.test_lambda import LAMBDA_RUNTIME_PYTHON36, TEST_LAMBDA_LIBS, TEST_LAMBDA_PYTHON
 from .fixtures import only_localstack
-from .lambdas import lambda_integration
-from .test_lambda import LAMBDA_RUNTIME_PYTHON36, TEST_LAMBDA_LIBS, TEST_LAMBDA_PYTHON
 
 TEST_QUEUE_NAME = "TestQueue"
 
@@ -42,8 +42,6 @@ TEST_POLICY = """
 }
 """
 
-THIS_FOLDER = os.path.dirname(os.path.realpath(__file__))
-TEST_LAMBDA_ECHO_FILE = os.path.join(THIS_FOLDER, "lambdas", "lambda_echo.py")
 TEST_LAMBDA_TAGS = {"tag1": "value1", "tag2": "value2", "tag3": ""}
 
 TEST_MESSAGE_ATTRIBUTES = {
@@ -109,6 +107,12 @@ class TestSqsProvider:
         assert queue_urls[0] not in result["QueueUrls"]
         assert queue_urls[1] not in result["QueueUrls"]
         assert queue_urls[2] in result["QueueUrls"]
+
+        # list queues regardless of prefix prefix
+        result = sqs_client.list_queues()
+        assert "QueueUrls" in result
+        for url in queue_urls:
+            assert url in result["QueueUrls"]
 
     def test_create_queue_and_get_attributes(self, sqs_client, sqs_queue):
         result = sqs_client.get_queue_attributes(
@@ -357,7 +361,7 @@ class TestSqsProvider:
 
         lambda_name = f"lambda-{short_uid()}"
         create_lambda_function(
-            lambda_name,
+            func_name=lambda_name,
             libs=TEST_LAMBDA_LIBS,
             handler_file=TEST_LAMBDA_PYTHON,
             runtime=LAMBDA_RUNTIME_PYTHON36,
@@ -970,7 +974,7 @@ class TestSqsProvider:
 
         lambda_name = f"lambda-{short_uid()}"
         create_lambda_function(
-            lambda_name,
+            func_name=lambda_name,
             libs=TEST_LAMBDA_LIBS,
             handler_file=TEST_LAMBDA_PYTHON,
             runtime=LAMBDA_RUNTIME_PYTHON36,
@@ -1440,7 +1444,7 @@ class TestSqsProvider:
 
         lambda_name = "lambda-{}".format(short_uid())
         create_lambda_function(
-            lambda_name,
+            func_name=lambda_name,
             libs=TEST_LAMBDA_LIBS,
             handler_file=TEST_LAMBDA_PYTHON,
             runtime=LAMBDA_RUNTIME_PYTHON36,

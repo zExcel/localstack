@@ -1077,11 +1077,13 @@ def determine_resource_physical_id(resource_id, stack=None, attribute=None):
     elif resource_type == "DynamoDB::Table":
         table_name = resource_props.get("TableName")
         if table_name:
-            if attribute == "Ref":
-                return table_name  # Note: "Ref" returns table name in AWS
             return table_name
     elif resource_type == "Logs::LogGroup":
         return resource_props.get("LogGroupName")
+    elif resource_type == "ApiGateway::Model":
+        model_name = resource_props.get("Name")
+        if model_name:
+            return model_name
 
     res_id = resource.get("PhysicalResourceId")
     if res_id and attribute in [None, "Ref", "PhysicalResourceId"]:
@@ -1513,8 +1515,8 @@ class TemplateDeployer(object):
             raise NoStackUpdates("No updates are to be performed.")
 
         # merge stack outputs and conditions
-        existing_stack.template["Outputs"].update(new_stack.template.get("Outputs", {}))
-        existing_stack.template["Conditions"].update(new_stack.template.get("Conditions", {}))
+        existing_stack.outputs.update(new_stack.outputs)
+        existing_stack.conditions.update(new_stack.conditions)
 
         # start deployment loop
         return self.apply_changes_in_loop(

@@ -128,6 +128,7 @@ def build_cluster_run_command(cluster_bin: str, settings: CommandSettings) -> Li
 class OpensearchCluster(Server):
     """Manages an OpenSearch cluster which is installed an operated by LocalStack."""
 
+    # TODO: legacy default port should be removed here
     def __init__(
         self, port=4571, host="localhost", version: str = None, directories: Directories = None
     ) -> None:
@@ -232,9 +233,9 @@ class OpensearchCluster(Server):
             "OPENSEARCH_TMPDIR": self.directories.tmp,
         }
 
-    @staticmethod
-    def _log_listener(line, **_kwargs):
-        LOG.info(line.rstrip())
+    def _log_listener(self, line, **_kwargs):
+        # logging the port before each line to be able to connect logs to specific instances
+        LOG.info("[%s] %s", self.port, line.rstrip())
 
 
 class CustomEndpoint:

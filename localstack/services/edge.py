@@ -21,13 +21,14 @@ from localstack.constants import (
     LS_LOG_TRACE_INTERNAL,
     PATH_USER_REQUEST,
 )
-from localstack.services.cloudwatch.cloudwatch_listener import PATH_GET_RAW_METRICS
+from localstack.http import Router
+from localstack.http.dispatcher import Handler, handler_dispatcher
 from localstack.services.generic_proxy import ProxyListener, modify_and_forward, start_proxy_server
 from localstack.services.infra import PROXY_LISTENERS
 from localstack.services.plugins import SERVICE_PLUGINS
 from localstack.services.s3.s3_utils import uses_host_addressing
 from localstack.services.sqs.sqs_listener import is_sqs_queue_url
-from localstack.utils import persistence
+from localstack.utils import common, persistence
 from localstack.utils.aws import aws_stack
 from localstack.utils.aws.aws_stack import is_internal_call_context, set_default_region_in_headers
 from localstack.utils.aws.request_routing import extract_version_and_action, matches_service_action
@@ -73,6 +74,9 @@ class ProxyListenerEdge(ProxyListener):
         self.service_manager = service_manager or SERVICE_PLUGINS
 
     def forward_request(self, method, path, data, headers):
+
+        if common.INFRA_STOPPED:
+            return 503
 
         if config.EDGE_FORWARD_URL:
             return do_forward_request_network(
@@ -445,9 +449,8 @@ def get_api_from_custom_rules(method, path, data, headers):
     if _in_path_or_payload("Action=AssumeRoleWithSAML"):
         return "sts", config.service_port("sts")
 
-    # CloudWatch backdoor API to retrieve raw metrics
-    if path.startswith(PATH_GET_RAW_METRICS):
-        return "cloudwatch", config.service_port("cloudwatch")
+    if _in_path_or_payload("Action=AssumeRole"):
+        return "sts", config.service_port("sts")
 
     # SQS queue requests
     if _in_path_or_payload("QueueUrl=") and _in_path_or_payload("Action="):
@@ -510,6 +513,9 @@ def get_service_port_for_account(service, headers):
 
 
 PROXY_LISTENER_EDGE = ProxyListenerEdge()
+# the ROUTER is part of the edge proxy. use the router to inject custom handlers that are handled before actual
+# service calls
+ROUTER: Router[Handler] = Router(dispatcher=handler_dispatcher())
 
 
 def is_trace_logging_enabled(headers):
@@ -522,21 +528,25 @@ def is_trace_logging_enabled(headers):
 
 
 def do_start_edge(bind_address, port, use_ssl, asynchronous=False):
+    from localstack.http.adapters import RouterListener
     from localstack.services.internal import LocalstackResourceHandler
-
-    # add internal routes as default listener
-    ProxyListener.DEFAULT_LISTENERS.append(LocalstackResourceHandler())
 
     start_dns_server(asynchronous=True)
 
+    listeners = [
+        LocalstackResourceHandler(),  # handle internal resources first
+        RouterListener(ROUTER),  # then custom routes
+        PROXY_LISTENER_EDGE,  # then call the edge proxy listener
+    ]
+
     # get port and start Edge
     print("Starting edge router (http%s port %s)..." % ("s" if use_ssl else "", port))
-    # use use=True here because our proxy allows both, HTTP and HTTPS traffic
+    # use use_ssl=True here because our proxy allows both, HTTP and HTTPS traffic
     proxy = start_proxy_server(
         port,
         bind_address=bind_address,
         use_ssl=True,
-        update_listener=PROXY_LISTENER_EDGE,
+        update_listener=listeners,
         check_port=False,
     )
     if not asynchronous:
@@ -651,7 +661,8 @@ def run_process_as_sudo(component, port, asynchronous=False, env_vars=None):
         sudo_cmd,
         env_vars_str,
         python_cmd,
-        __file__,
+        "-m",
+        "localstack.services.edge",
         component,
         str(port),
     ]

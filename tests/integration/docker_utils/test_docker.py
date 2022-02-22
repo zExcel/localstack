@@ -10,7 +10,7 @@ import pytest
 from localstack import config
 from localstack.config import in_docker
 from localstack.utils.common import is_ipv4_address, safe_run, short_uid, to_str
-from localstack.utils.docker_utils import (
+from localstack.utils.container_utils.container_client import (
     ContainerClient,
     ContainerException,
     DockerContainerStatus,
@@ -107,6 +107,12 @@ class TestDockerClient:
         try:
             docker_client.start_container(container_id)
             assert DockerContainerStatus.UP == docker_client.get_container_status(container_name)
+
+            docker_client.pause_container(container_id)
+            assert DockerContainerStatus.PAUSED == docker_client.get_container_status(
+                container_name
+            )
+
             docker_client.stop_container(container_id)
             assert DockerContainerStatus.DOWN == docker_client.get_container_status(container_name)
         finally:
@@ -246,6 +252,10 @@ class TestDockerClient:
     def test_stop_non_existing_container(self, docker_client: ContainerClient):
         with pytest.raises(NoSuchContainer):
             docker_client.stop_container("this_container_does_not_exist")
+
+    def test_pause_non_existing_container(self, docker_client: ContainerClient):
+        with pytest.raises(NoSuchContainer):
+            docker_client.pause_container("this_container_does_not_exist")
 
     def test_remove_non_existing_container(self, docker_client: ContainerClient):
         with pytest.raises(NoSuchContainer):
@@ -940,6 +950,37 @@ class TestDockerClient:
         ip = docker_client.get_container_ip(dummy_container.container_id)
         assert is_ipv4_address(ip)
         assert "127.0.0.1" != ip
+
+    def test_commit_creates_image_from_running_container(self, docker_client: ContainerClient):
+        image_name = "lorem"
+        image_tag = "ipsum"
+        image = f"{image_name}:{image_tag}"
+        container_name = _random_container_name()
+
+        try:
+            docker_client.run_container(
+                "alpine",
+                name=container_name,
+                command=["sleep", "60"],
+                detach=True,
+            )
+            docker_client.commit(container_name, image_name, image_tag)
+            assert image in docker_client.get_docker_image_names()
+        finally:
+            docker_client.remove_container(container_name)
+            docker_client.remove_image(image, force=True)
+
+    def test_commit_image_raises_for_nonexistent_container(self, docker_client: ContainerClient):
+        with pytest.raises(NoSuchContainer):
+            docker_client.commit("nonexistent_container", "image_name", "should_not_matter")
+
+    def test_remove_image_raises_for_nonexistent_image(self, docker_client: ContainerClient):
+        image_name = "this_image"
+        image_tag = "does_not_exist"
+        image = f"{image_name}:{image_tag}"
+
+        with pytest.raises(NoSuchImage):
+            docker_client.remove_image(image, force=False)
 
     def test_get_container_ip_with_network(
         self, docker_client: ContainerClient, create_container, create_network

@@ -8,7 +8,6 @@ import tempfile
 import time
 from typing import Any, Dict, List, Mapping, Tuple
 
-import six
 from boto3 import Session
 
 from localstack.constants import (
@@ -756,7 +755,7 @@ SERVICE_PORTS = parse_service_ports()
 def populate_config_env_var_names():
     global CONFIG_ENV_VARS
 
-    for key, value in six.iteritems(DEFAULT_SERVICE_PORTS):
+    for key, value in DEFAULT_SERVICE_PORTS.items():
         clean_key = key.upper().replace("-", "_")
         CONFIG_ENV_VARS += [
             clean_key + "_BACKEND",
@@ -833,10 +832,18 @@ if LS_LOG in TRACE_LOG_LEVELS:
 class ServiceProviderConfig(Mapping[str, str]):
     _provider_config: Dict[str, str]
     default_value: str
+    override_prefix: str = "PROVIDER_OVERRIDE_"
 
     def __init__(self, default_value: str):
         self._provider_config = {}
         self.default_value = default_value
+
+    def load_from_environment(self, env: Mapping[str, str] = None):
+        if env is None:
+            env = os.environ
+        for key, value in env.items():
+            if key.startswith(self.override_prefix):
+                self.set_provider(key[len(self.override_prefix) :].lower().replace("_", "-"), value)
 
     def get_provider(self, service: str) -> str:
         return self._provider_config.get(service, self.default_value)
@@ -867,11 +874,7 @@ class ServiceProviderConfig(Mapping[str, str]):
 
 SERVICE_PROVIDER_CONFIG = ServiceProviderConfig("default")
 
-for key, value in os.environ.items():
-    if key.startswith("PROVIDER_OVERRIDE_"):
-        SERVICE_PROVIDER_CONFIG.set_provider(
-            key.lstrip("PROVIDER_OVERRIDE_").lower().replace("_", "-"), value
-        )
+SERVICE_PROVIDER_CONFIG.load_from_environment()
 
 # initialize directories
 if is_in_docker:

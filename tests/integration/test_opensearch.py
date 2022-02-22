@@ -259,7 +259,7 @@ class TestOpensearchProvider:
         # Just check if 1.1 is contained (not equality) to avoid breaking the test if new versions are supported
         assert "OpenSearch_1.1" in compatibility["TargetVersions"]
 
-    def test_create_domain(self, opensearch_client):
+    def test_create_domain(self, opensearch_client, opensearch_wait_for_cluster):
         domain_name = f"opensearch-domain-{short_uid()}"
         try:
             opensearch_client.create_domain(DomainName=domain_name)
@@ -268,16 +268,22 @@ class TestOpensearchProvider:
             domain_names = [domain["DomainName"] for domain in response["DomainNames"]]
 
             assert domain_name in domain_names
+            # wait for the cluster
+            opensearch_wait_for_cluster(domain_name=domain_name)
+
         finally:
             opensearch_client.delete_domain(DomainName=domain_name)
 
-    def test_create_existing_domain_causes_exception(self, opensearch_client):
+    def test_create_existing_domain_causes_exception(
+        self, opensearch_client, opensearch_wait_for_cluster
+    ):
         domain_name = f"opensearch-domain-{short_uid()}"
         try:
             opensearch_client.create_domain(DomainName=domain_name)
             with pytest.raises(botocore.exceptions.ClientError) as exc_info:
                 opensearch_client.create_domain(DomainName=domain_name)
             assert exc_info.type.__name__ == "ResourceAlreadyExistsException"
+            opensearch_wait_for_cluster(domain_name=domain_name)
         finally:
             opensearch_client.delete_domain(DomainName=domain_name)
 
@@ -505,8 +511,14 @@ class TestSingletonClusterManager:
         # check if the second url matches the first one
         assert cluster_0.url == cluster_1.url
 
-        call_safe(cluster_0.shutdown)
-        call_safe(cluster_1.shutdown)
+        try:
+            # wait for the two clusters
+            assert cluster_0.wait_is_up(240)
+            # make sure cluster_0 (which is equal to cluster_1) is reachable
+            retry(lambda: try_cluster_health(cluster_0.url), retries=3, sleep=5)
+        finally:
+            call_safe(cluster_0.shutdown)
+            call_safe(cluster_1.shutdown)
 
 
 class TestCustomBackendManager:

@@ -11,6 +11,8 @@ from localstack.aws.protocol.serializer import create_serializer
 from localstack.aws.spec import load_service
 from localstack.utils.common import to_str
 
+_skip_assert = {}
+
 
 def _botocore_serializer_integration_test(
     service: str,
@@ -42,8 +44,10 @@ def _botocore_serializer_integration_test(
 
     # Use our serializer to serialize the response
     response_serializer = create_serializer(service)
+    # The serializer changes the incoming dict, therefore copy it before passing it to the serializer
+    response_to_parse = copy.deepcopy(response)
     serialized_response = response_serializer.serialize_to_response(
-        response, service.operation_model(action)
+        response_to_parse, service.operation_model(action)
     )
 
     # Use the parser from botocore to parse the serialized response
@@ -53,6 +57,8 @@ def _botocore_serializer_integration_test(
         service.operation_model(action).output_shape,
     )
 
+    return_response = copy.deepcopy(parsed_response)
+
     # Check if the result is equal to the initial response params
     assert "ResponseMetadata" in parsed_response
     assert "HTTPStatusCode" in parsed_response["ResponseMetadata"]
@@ -60,9 +66,13 @@ def _botocore_serializer_integration_test(
     assert "RequestId" in parsed_response["ResponseMetadata"]
     assert len(parsed_response["ResponseMetadata"]["RequestId"]) == 52
     del parsed_response["ResponseMetadata"]
+
     if expected_response_content is None:
         expected_response_content = response
-    assert parsed_response == expected_response_content
+    if expected_response_content is not _skip_assert:
+        assert parsed_response == expected_response_content
+
+    return return_response
 
 
 def _botocore_error_serializer_integration_test(
@@ -639,6 +649,172 @@ def test_restjson_serializer_xray_with_botocore():
     _botocore_serializer_integration_test("xray", "UpdateSamplingRule", parameters)
 
 
+def test_restjson_header_target_serialization():
+    """
+    Tests the serialization of attributes into a specified header key based on this example from glacier:
+
+        "InitiateJobOutput":{
+          "type":"structure",
+          "members":{
+            "location":{
+              "shape":"string",
+              "location":"header",
+              "locationName":"Location"
+            },
+            "jobId":{
+              "shape":"string",
+              "location":"header",
+              "locationName":"x-amz-job-id"
+            },
+            "jobOutputPath":{
+              "shape":"string",
+              "location":"header",
+              "locationName":"x-amz-job-output-path"
+            }
+          },
+          "documentation":"<p>Contains the Amazon S3 Glacier response to your request.</p>"
+        },
+    """
+    response = {
+        "location": "/here",
+        "jobId": "42069",
+        "jobOutputPath": "/there",
+    }
+
+    result = _botocore_serializer_integration_test(
+        "glacier",
+        "InitiateJob",
+        response,
+        status_code=202,
+    )
+
+    headers = result["ResponseMetadata"]["HTTPHeaders"]
+    assert "location" in headers
+    assert "x-amz-job-id" in headers
+    assert "x-amz-job-output-path" in headers
+    assert "locationName" not in headers
+    assert "jobOutputPath" not in headers
+
+    assert headers["location"] == "/here"
+    assert headers["x-amz-job-id"] == "42069"
+    assert headers["x-amz-job-output-path"] == "/there"
+
+
+def test_restjson_headers_target_serialization():
+    # SendApiAssetResponse
+    response = {
+        "Body": "hello",
+        "ResponseHeaders": {
+            "foo": "bar",
+            "baz": "ed",
+        },
+    }
+
+    # skipping assert here, because the response will contain all HTTP headers (given the nature of "ResponseHeaders"
+    # attribute).
+    result = _botocore_serializer_integration_test(
+        "dataexchange", "SendApiAsset", response, expected_response_content=_skip_assert
+    )
+
+    assert result["Body"] == "hello"
+    assert result["ResponseHeaders"]["foo"] == "bar"
+    assert result["ResponseHeaders"]["baz"] == "ed"
+
+    headers = result["ResponseMetadata"]["HTTPHeaders"]
+    assert "foo" in headers
+    assert "baz" in headers
+    assert headers["foo"] == "bar"
+    assert headers["baz"] == "ed"
+
+
+def test_restjson_payload_serialization():
+    """
+    Tests the serialization of specific member attributes as payload, based on an appconfig example:
+
+        "Configuration":{
+          "type":"structure",
+          "members":{
+            "Content":{
+              "shape":"Blob",
+            },
+            "ConfigurationVersion":{
+              "shape":"Version",
+              "location":"header",
+              "locationName":"Configuration-Version"
+            },
+            "ContentType":{
+              "shape":"String",
+              "location":"header",
+              "locationName":"Content-Type"
+            }
+          },
+          "payload":"Content"
+        },
+    """
+
+    response = {
+        "Content": '{"foo": "bar"}',
+        "ConfigurationVersion": "123",
+        "ContentType": "application/json",
+    }
+
+    result = _botocore_serializer_integration_test(
+        "appconfig",
+        "GetConfiguration",
+        response,
+        status_code=200,
+    )
+    headers = result["ResponseMetadata"]["HTTPHeaders"]
+    assert "configuration-version" in headers
+    assert headers["configuration-version"] == "123"
+    assert headers["content-type"] == "application/json"
+
+
+def test_restjson_none_serialization():
+    parameters = {
+        "FunctionName": "test-name",
+        "VpcConfig": {"SubnetIds": None, "SecurityGroupIds": [None], "VpcId": "123"},
+        "TracingConfig": None,
+        "DeadLetterConfig": {},
+    }
+    expected = {
+        "FunctionName": "test-name",
+        "VpcConfig": {"SecurityGroupIds": [], "VpcId": "123"},
+        "DeadLetterConfig": {},
+    }
+    _botocore_serializer_integration_test(
+        "lambda", "CreateFunction", parameters, status_code=201, expected_response_content=expected
+    )
+
+
+def test_restxml_none_serialization():
+    # Structure = None
+    _botocore_serializer_integration_test(
+        "route53", "ListHostedZonesByName", {}, expected_response_content={}
+    )
+    # Structure Value = None
+    parameters = {"HostedZones": None}
+    _botocore_serializer_integration_test(
+        "route53", "ListHostedZonesByName", parameters, expected_response_content={}
+    )
+    # List Value = None
+    parameters = {"HostedZones": [None]}
+    expected = {"HostedZones": []}
+    _botocore_serializer_integration_test(
+        "route53", "ListHostedZonesByName", parameters, expected_response_content=expected
+    )
+
+
+def test_restjson_int_header_serialization():
+    response = {
+        "Configuration": '{"foo": "bar"}',
+        "ContentType": "application/json",
+        "NextPollConfigurationToken": "abcdefg",
+        "NextPollIntervalInSeconds": 42,
+    }
+    _botocore_serializer_integration_test("appconfigdata", "GetLatestConfiguration", response)
+
+
 def test_ec2_serializer_ec2_with_botocore():
     parameters = {
         "InstanceEventWindow": {
@@ -688,7 +864,137 @@ def test_ec2_protocol_custom_error_serialization():
     )
 
 
-# TODO Add additional tests (or even automate the creation)
-# - Go to the AWS CLI reference (https://docs.aws.amazon.com)
-# - Look at the CLI reference for APIs that use the protocol you want to test
-# - Use the output examples to verify that the serialization works
+def test_restxml_without_output_shape():
+    _botocore_serializer_integration_test("cloudfront", "DeleteDistribution", {}, status_code=204)
+
+
+def test_restxml_header_location():
+    """Tests fields with the location trait "header" for rest-xml."""
+    _botocore_serializer_integration_test(
+        "cloudfront",
+        "CreateCloudFrontOriginAccessIdentity",
+        {
+            "Location": "location-header-field",
+            "ETag": "location-etag-field",
+            "CloudFrontOriginAccessIdentity": {},
+        },
+        status_code=201,
+    )
+
+
+def test_restxml_headers_location():
+    """Tests fields with the location trait "headers" for rest-xml."""
+    _botocore_serializer_integration_test(
+        "s3",
+        "HeadObject",
+        {
+            "DeleteMarker": False,
+            "Metadata": {"headers_key1": "headers_value1", "headers_key2": "headers_value2"},
+        },
+        # The spec defines the ContentType and the ContentLength, which is automatically set
+        expected_response_content={
+            "DeleteMarker": False,
+            "Metadata": {"headers_key1": "headers_value1", "headers_key2": "headers_value2"},
+            "ContentType": "text/xml",
+            "ContentLength": 59,
+        },
+    )
+
+
+def test_restjson_header_location():
+    """Tests fields with the location trait "header" for rest-xml."""
+    _botocore_serializer_integration_test(
+        "ebs", "GetSnapshotBlock", {"BlockData": "binary-data", "DataLength": 15}
+    )
+
+
+def test_restjson_headers_location():
+    """Tests fields with the location trait "headers" for rest-json."""
+    response = _botocore_serializer_integration_test(
+        "dataexchange",
+        "SendApiAsset",
+        {
+            "ResponseHeaders": {"headers_key1": "headers_value1", "headers_key2": "headers_value2"},
+        },
+        expected_response_content=_skip_assert,
+    )
+    # The spec does not define a locationName for ResponseHeaders, which means there is no header field prefix.
+    # Therefore, _all_ header fields are parsed by botocore (which is technically correct).
+    # We only check if the two header fields are present.
+    assert "ResponseHeaders" in response
+    assert "headers_key1" in response["ResponseHeaders"]
+    assert "headers_key2" in response["ResponseHeaders"]
+    assert "headers_value1" == response["ResponseHeaders"]["headers_key1"]
+    assert "headers_value2" == response["ResponseHeaders"]["headers_key2"]
+
+
+def test_all_non_existing_key():
+    """Tests the different protocols to allow non-existing keys in strucutres / dicts."""
+    # query
+    _botocore_serializer_integration_test(
+        "cloudformation",
+        "DetectStackResourceDrift",
+        {
+            "StackResourceDrift": {
+                "StackId": "arn:aws:cloudformation:us-west-2:123456789012:stack/MyStack/d0a825a0-e4cd-xmpl-b9fb-061c69e99204",
+                "unknown": {"foo": "bar"},
+            }
+        },
+        expected_response_content={
+            "StackResourceDrift": {
+                "StackId": "arn:aws:cloudformation:us-west-2:123456789012:stack/MyStack/d0a825a0-e4cd-xmpl-b9fb-061c69e99204",
+            }
+        },
+    )
+    # json
+    _botocore_serializer_integration_test(
+        "cognito-idp",
+        "DescribeUserPool",
+        {
+            "UserPool": {
+                "Id": "string",
+                "Unknown": "Ignored",
+            }
+        },
+        expected_response_content={
+            "UserPool": {
+                "Id": "string",
+            }
+        },
+    )
+    # rest-json
+    _botocore_serializer_integration_test(
+        "xray",
+        "UpdateSamplingRule",
+        {
+            "SamplingRuleRecord": {
+                "SamplingRule": {
+                    "ResourceARN": "123456789001234567890",
+                    "Unknown": "Ignored",
+                },
+            }
+        },
+        expected_response_content={
+            "SamplingRuleRecord": {
+                "SamplingRule": {
+                    "ResourceARN": "123456789001234567890",
+                },
+            }
+        },
+    )
+    # rest-xml
+    _botocore_serializer_integration_test(
+        "cloudfront",
+        "TestFunction",
+        {
+            "TestResult": {
+                "FunctionErrorMessage": "string",
+            },
+            "Unknown": "Ignored",
+        },
+        expected_response_content={
+            "TestResult": {
+                "FunctionErrorMessage": "string",
+            },
+        },
+    )

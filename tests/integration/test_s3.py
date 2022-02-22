@@ -12,7 +12,8 @@ import unittest
 import uuid
 from io import BytesIO
 from unittest.mock import patch
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, quote, urlparse
+from urllib.request import Request, urlopen
 
 import boto3
 import pytest
@@ -21,8 +22,6 @@ from botocore import UNSIGNED
 from botocore.client import Config
 from botocore.exceptions import ClientError
 from pytz import timezone
-from six.moves.urllib import parse as urlparse
-from six.moves.urllib.request import Request, urlopen
 
 from localstack import config, constants
 from localstack.constants import (
@@ -65,9 +64,11 @@ TEST_GET_OBJECT_RANGE = 17
 TEST_REGION_1 = "eu-west-1"
 
 THIS_FOLDER = os.path.dirname(os.path.realpath(__file__))
-TEST_LAMBDA_PYTHON_ECHO = os.path.join(THIS_FOLDER, "lambdas", "lambda_triggered_by_s3.py")
+TEST_LAMBDA_PYTHON_TRIGGERED_S3 = os.path.join(
+    THIS_FOLDER, "awslambda", "functions", "lambda_triggered_by_s3.py"
+)
 TEST_LAMBDA_PYTHON_DOWNLOAD_FROM_S3 = os.path.join(
-    THIS_FOLDER, "lambdas", "lambda_triggered_by_sqs_download_s3_file.py"
+    THIS_FOLDER, "awslambda", "functions", "lambda_triggered_by_sqs_download_s3_file.py"
 )
 
 BATCH_DELETE_BODY = """
@@ -1604,7 +1605,7 @@ class TestS3(unittest.TestCase):
         self.s3_client.create_bucket(Bucket=bucket_name)
 
         testutil.create_lambda_function(
-            handler_file=TEST_LAMBDA_PYTHON_ECHO,
+            handler_file=TEST_LAMBDA_PYTHON_TRIGGERED_S3,
             func_name=function_name,
             runtime=LAMBDA_RUNTIME_PYTHON36,
         )
@@ -1963,7 +1964,7 @@ class TestS3(unittest.TestCase):
         expires = 4
 
         def make_v2_url_invalid(url):
-            parsed = urlparse.urlparse(url)
+            parsed = urlparse(url)
             query_params = parse_qs(parsed.query)
             url = "{}/{}?AWSAccessKeyId={}&Signature={}&Expires={}".format(
                 url_prefix,
@@ -1975,7 +1976,7 @@ class TestS3(unittest.TestCase):
             return url
 
         def make_v4_url_invalid(url):
-            parsed = urlparse.urlparse(url)
+            parsed = urlparse(url)
             query_params = parse_qs(parsed.query)
             url = (
                 "{}/{}?X-Amz-Algorithm=AWS4-HMAC-SHA256&"
@@ -2358,7 +2359,9 @@ class TestS3(unittest.TestCase):
         if not use_docker():
             return
         temp_folder = new_tmp_dir()
-        handler_file = os.path.join(THIS_FOLDER, "lambdas", "lambda_s3_integration.js")
+        handler_file = os.path.join(
+            THIS_FOLDER, "awslambda", "functions", "lambda_s3_integration.js"
+        )
         shutil.copy(handler_file, temp_folder)
         run("cd %s; npm i @aws-sdk/client-s3; npm i @aws-sdk/s3-request-presigner" % temp_folder)
 
