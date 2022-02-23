@@ -236,7 +236,10 @@ class SdkDockerClient(ContainerClient):
             context_path = context_path or os.path.dirname(dockerfile_path)
             LOG.debug("Building Docker image %s from %s", image_name, dockerfile_path)
             self.client().images.build(
-                path=context_path, dockerfile=dockerfile_path, tag=image_name
+                path=context_path,
+                dockerfile=dockerfile_path,
+                tag=image_name,
+                rm=True,
             )
         except APIError as e:
             raise ContainerException("Unable to build Docker image") from e
